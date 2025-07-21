@@ -10,7 +10,7 @@ def print_dicom_data(data_path):
     This function does not return any value; its purpose is to display the
     DICOM dataset information directly.
 
-    :param data_path: Path to the DICOM file (e.g., 'path/to/image.dicom').
+    :param data_path: Path to the DICOM file (e.g., ``path/to/image.dicom``).
     :type data_path: str
     :return: None. This function does not return any value.
     :rtype: None
@@ -19,7 +19,7 @@ def print_dicom_data(data_path):
     print(data)
 
 
-def read_dicom_image(data_path, bounding_box=None):
+def read_dicom_image(data_path):
     """
     Reads chest X-ray images from DICOM files and applies a series of
     preprocessing techniques suitable for deep learning models. It also
@@ -28,23 +28,18 @@ def read_dicom_image(data_path, bounding_box=None):
     Preprocessing steps include:
 
     -   **Pixel Array Extraction**: Extracts raw pixel data from the DICOM file.
-    -   **Type Conversion**: Converts pixel data to `float32` to handle varying bit depths.
+    -   **Type Conversion**: Converts pixel data to ``float32`` to handle varying bit depths.
     -   **MONOCHROME1 Inversion**: Inverts pixel values for `MONOCHROME1`
         photometric interpretation to ensure higher values represent brighter regions.
-    -   **Normalization**: Scales pixel values to the 0-255 range and converts to `uint8`.
-    -   **Resizing with Padding**: Resizes the image to 640x640 while maintaining
-        its aspect ratio by adding black padding.
+    -   **Normalization**: Scales pixel values to the 0-255 range and converts to ``uint8``.
     -   **Bounding Box Adjustment**: Transforms bounding box coordinates (if provided)
         to correspond to the resized and padded image.
     -   **Contrast Enhancement (CLAHE)**: Applies Contrast Limited Adaptive Histogram Equalization
         to improve local contrast.
 
-    :param data_path: Path to the DICOM file (e.g., 'path/to/image.dcm').
-    :param bounding_box: An optional list of bounding box coordinates for objects in the image.
-                         Each bounding box should be in the format ``[x_min, y_min, x_max, y_max]``.
-                         If None, no bounding boxes will be processed. Defaults to None.
+    :param data_path: Path to the DICOM file (e.g., ``path/to/image.dicom``).
     :return: A tuple containing:
-             - **img_clahe_enhanced** (numpy.ndarray): The fully preprocessed image (uint8, 1-channel grayscale, 640x640).
+             - **img_clahe_enhanced** (numpy.ndarray): The fully preprocessed image (uint8, 1-channel grayscale).
              - **adjusted_bounding_boxes** (list): A list of transformed bounding box coordinates.
                This will be an empty list if `bounding_box` was None or empty in the input.
     :rtype: tuple[numpy.ndarray, list]
@@ -63,14 +58,11 @@ def read_dicom_image(data_path, bounding_box=None):
     # Normalize the images to 0-255 and convert to uint8
     img_normalized = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
-    # Resize the images to 640x640 with padding.
-    img_resized_padded, adjusted_bounding_boxes = resize_image_with_padding(img_normalized, bounding_box)
-
     # Apply the CLAHE technique to enhance contrast
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    img_clahe_enhanced = clahe.apply(img_resized_padded)
+    img_clahe_enhanced = clahe.apply(img_normalized)
 
-    return img_clahe_enhanced, adjusted_bounding_boxes
+    return img_clahe_enhanced
 
 
 def resize_image_with_padding(img, bounding_boxes=None,
@@ -84,14 +76,14 @@ def resize_image_with_padding(img, bounding_boxes=None,
     :param bounding_boxes: An optional list of bounding box coordinates.
                            Each bounding box should be in the format ``[x_min, y_min, x_max, y_max]``.
                            If None, no bounding boxes will be processed. Defaults to None.
-    :param target_shape: A tuple `(width, height)` representing the desired output image size.
-                         Defaults to `(640, 640)`.
-    :param pad_color: A tuple `(B, G, R)` specifying the color of the padding pixels for color images.
+    :param target_shape: A tuple ``(width, height)`` representing the desired output image size.
+                         Defaults to ``(640, 640)``.
+    :param pad_color: A tuple ``(B, G, R)`` specifying the color of the padding pixels for color images.
                       For grayscale images, a single integer value (0-255) can be provided.
-                      Defaults to black `(0, 0, 0)`.
+                      Defaults to black ``(0, 0, 0)``.
     :return: A tuple containing:
              - **padded_img** (numpy.ndarray): The resized and padded image,
-               which will have the `target_shape`.
+               which will have the ``target_shape``.
              - **updated_bounding_boxes** (list): A list of transformed bounding box coordinates.
                If `bounding_boxes` was None or empty, this will be an empty list.
     :rtype: tuple[numpy.ndarray, list]
@@ -150,7 +142,8 @@ def draw_bounding_boxes(img, bounding_boxes):
 
     This function iterates through a list of bounding box coordinates and
     draws a rectangle for each box on the image. The original image
-    remains unchanged.
+    remains unchanged. If bounding boxes are None, the function return
+    the original image.
 
     :param img: The input image (NumPy array). Can be grayscale (2D) or color (3D).
                 For grayscale images, the drawn boxes will appear in the specified color
@@ -166,8 +159,11 @@ def draw_bounding_boxes(img, bounding_boxes):
     """
     img_box = img.copy()
 
+    if bounding_boxes is None or bounding_boxes == []:
+        return img_box
+
     for box in bounding_boxes:
         x_min, y_min, x_max, y_max = box
-        cv2.rectangle(img_box, (int(x_min), int(y_min)), (int(x_max), int(y_max)), color=(255, 0, 0), thickness=5)
+        cv2.rectangle(img_box, (int(x_min), int(y_min)), (int(x_max), int(y_max)), color=(255, 0, 0), thickness=10)
 
     return img_box
