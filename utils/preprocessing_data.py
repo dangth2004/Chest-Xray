@@ -164,6 +164,6 @@ def draw_bounding_boxes(img, bounding_boxes):
 
     for box in bounding_boxes:
         x_min, y_min, x_max, y_max = box
-        cv2.rectangle(img_box, (int(x_min), int(y_min)), (int(x_max), int(y_max)), color=(255, 0, 0), thickness=10)
+        cv2.rectangle(img_box, (int(x_min), int(y_min)), (int(x_max), int(y_max)), color=(255, 0, 0), thickness=5)
 
     return img_box
