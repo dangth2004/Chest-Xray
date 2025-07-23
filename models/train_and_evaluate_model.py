@@ -6,7 +6,6 @@ import torch
 from torchvision.transforms import v2
 from torch.utils.data import Dataset, DataLoader
 from torchvision import tv_tensors
-from torchvision.io import decode_image
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 
@@ -21,17 +20,44 @@ class CustomDataset(Dataset):
         return len(self.image_ids)
 
     def __getitem__(self, index):
-        img_path = os.path.join(self.img_dir, f"{self.image_ids[index]}.png")
-        img = cv2.imread(img_path)
-        x_min = self.labels_df["x_min"].values[index]
-        x_max = self.labels_df["x_max"].values[index]
-        y_min = self.labels_df["y_min"].values[index]
-        y_max = self.labels_df["y_max"].values[index]
-        bbox = [x_min, x_max, y_min, y_max]
-        img = tv_tensors.Image(img)
-        target = {"boxes": tv_tensors.BoundingBoxes(bbox, format="XYXY", canvas_size=(640, 640)),
-                  "image_id": self.image_ids[index], "class_id": self.labels_df["class_id"].values[index],
-                  "class_name": self.labels_df["class_name"].values[index]}
+        image_id = self.image_ids[index]  # Lấy image_id hiện tại
+        img_path = os.path.join(self.img_dir, f"{image_id}.png")  # Sử dụng image_id đúng
+
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            # Xử lý trường hợp không đọc được ảnh (ví dụ: ảnh không tồn tại hoặc bị lỗi)
+            print(f"Warning: Could not read image {img_path}. Skipping or handling error.")
+            # Bạn có thể return một giá trị mặc định hoặc raise an error tùy vào yêu cầu
+            # For simplicity, let's return None for now, and handle in DataLoader
+            return None, None  # Hoặc bạn có thể bỏ qua và xử lý ở DataLoader nếu batch_sampler cho phép
+
+        # Lọc DataFrame để lấy tất cả các bản ghi (bounding box) cho image_id này
+        image_annotations = self.labels_df[self.labels_df["image_id"] == image_id]
+
+        # Lấy bounding box, class_id, class_name từ các bản ghi đã lọc
+        # Cần chuyển đổi thành list of lists hoặc tensor nếu có nhiều bbox
+        boxes = image_annotations[["x_min", "y_min", "x_max", "y_max"]].values.tolist()
+        class_ids = image_annotations["class_id"].values.tolist()
+        class_names = image_annotations["class_name"].values.tolist()
+
+        img = tv_tensors.Image(img)  # Đảm bảo ảnh là tensor của torchvision
+        # Xử lý trường hợp ảnh không có bounding box nào
+        if not boxes:
+            # Tạo tensor rỗng nếu không có bounding box nào
+            bbox_tensor = tv_tensors.BoundingBoxes([], format="XYXY",
+                                                   canvas_size=img.shape[-2:])  # Sử dụng kích thước ảnh thực tế
+            class_id_tensor = torch.tensor([], dtype=torch.int64)
+        else:
+            bbox_tensor = tv_tensors.BoundingBoxes(boxes, format="XYXY", canvas_size=img.shape[-2:])
+            class_id_tensor = torch.tensor(class_ids, dtype=torch.int64)  # Đảm bảo dtype là int64 cho class_id
+
+        target = {
+            "boxes": bbox_tensor,
+            "image_id": image_id,
+            "class_name": class_names,
+            "labels": class_id_tensor  # Thường dùng "labels" thay vì "class_id" cho nhất quán
+        }
+        # "class_name" có thể không cần thiết trong target nếu bạn chỉ dùng class_id để huấn luyện
 
         if self.transform:
             img, target = self.transform(img, target)
@@ -39,38 +65,24 @@ class CustomDataset(Dataset):
         return img, target
 
 
-def data_transform(img_size=(640, 640)):
-    """
-    Generates image transformation pipelines for training and evaluation.
-
-    The training pipeline includes data augmentation techniques such as random
-    horizontal/vertical flips and rotation, in addition to resizing and
-    normalization. The evaluation pipeline only includes resizing and
-    normalization.
-
-    :param img_size: A tuple ``(height, width)`` specifying the target size for
-                     resizing images. Defaults to ``(640, 640)``.
-    :return: A tuple containing two torchvision.transforms.v2.Compose objects:
-             - ``train_transforms``: The transformation pipeline for training data.
-             - ``test_transforms``: The transformation pipeline for validation and
-                                test data.
-    :rtype: ``tuple[v2.Compose, v2.Compose]``
-    """
+def data_transform():
     # Transform for training data (with data augmentation)
     train_transforms = v2.Compose([
-        v2.Resize(size=img_size),
+        v2.ToImage(),
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Grayscale(),
         v2.RandomHorizontalFlip(p=0.5),
         v2.RandomVerticalFlip(p=0.5),
         v2.RandomRotation(degrees=30),
-        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        v2.ToTensor(),
+        v2.Normalize(mean=[0.456], std=[0.224])
     ])
 
     # Transform for valid and test data (without data augmentation)
     test_transforms = v2.Compose([
-        v2.Resize(size=img_size),
-        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        v2.ToTensor(),
+        v2.ToImage(),
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Grayscale(),
+        v2.Normalize(mean=[0.456], std=[0.224])
     ])
 
     return train_transforms, test_transforms
