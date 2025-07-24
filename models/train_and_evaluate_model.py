@@ -3,6 +3,8 @@ import time
 import cv2
 import pandas as pd
 import torch
+from tqdm import tqdm
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.transforms import v2
 from torch.utils.data import Dataset, DataLoader
 from torchvision import tv_tensors
@@ -88,6 +90,10 @@ def data_transform():
     return train_transforms, test_transforms
 
 
+def collate_fn(batch):
+    return tuple(zip(*batch))
+
+
 def load_data(train_folder, val_folder, test_folder,
               train_csv, val_csv, test_csv):
     """
@@ -118,80 +124,140 @@ def load_data(train_folder, val_folder, test_folder,
     test_dataset = CustomDataset(img_dir=test_folder, annotation_file=test_csv, transform=test_transforms)
 
     # Load dataset
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=64, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=collate_fn)
+    valid_loader = DataLoader(valid_dataset, batch_size=64, shuffle=False, collate_fn=collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=collate_fn)
 
     return train_loader, valid_loader, test_loader
 
 
-def train_model(epochs, model, device, optimizer, train_loader, valid_loader):
+def _train_one_epoch(model, optimizer, train_loader, device):
+    model.train()
+    train_loss = 0.0
+
+    # Wrap train_loader with tqdm for a progress bar
+    train_bar = tqdm(train_loader, desc=f"Training", unit="batch")
+
+    for images, targets in train_bar:
+        images = [img.to(device) for img in images]
+        targets = [{k: v.to(device) for k, v in t.items() if isinstance(v, torch.Tensor)} for t in targets]
+
+        optimizer.zero_grad()
+        loss_dict = model(images, targets)
+        loss = sum(loss for loss in loss_dict.values())
+
+        loss.backward()
+        optimizer.step()
+        train_loss += loss.item()
+
+        # Update the progress bar with the current loss
+        train_bar.set_postfix(loss=loss.item())
+
+    avg_train_loss = train_loss / len(train_loader)
+    return avg_train_loss
+
+
+def _validate_one_epoch(model, valid_loader, device, map_metrics):
+    model.eval()
+    map_metrics.reset()
+    valid_loss = 0.0
+
+    # Wrap valid_loader with tqdm
+    valid_bar = tqdm(valid_loader, desc=f"Validation", unit="batch")
+
+    with torch.no_grad():
+        for images, targets in valid_bar:
+            images = [img.to(device) for img in images]
+            targets = [{k: v.to(device) for k, v in t.items() if isinstance(v, torch.Tensor)} for t in targets]
+
+            loss_dict = model(images, targets)
+            loss = sum(loss for loss in loss_dict.values())
+            output = model(images)
+            map_metrics.update(output, targets)
+
+            valid_loss += loss.item()
+
+            # Update the progress bar with the current validation loss
+            valid_bar.set_postfix(loss=loss.item())
+
+    avg_valid_loss = valid_loss / len(valid_loader)
+
+    result = map_metrics.compute()
+    map_score_50 = result["map_50"].item()
+    map_score_50_95 = result["map"].item()
+
+    return avg_valid_loss, map_score_50, map_score_50_95
+
+
+def train_model(epochs, model, device, optimizer, train_loader, valid_loader, result_file, model_save_path):
     valid_map50_history, valid_map50_95_history = [], []
     train_loss_history, valid_loss_history = [], []
     map_metrics = MeanAveragePrecision(iou_thresholds=[0.5, 0.95])
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
+
+    best_map = 0.0
+    metrics_data = []
+
+    os.makedirs("results", exist_ok=True)
 
     print(f"Training for {epochs} epochs...")
     for epoch in range(epochs):
         start_time = time.perf_counter()
 
         # Train model on training set
-        model.train()
-        train_loss = 0.0
-
-        for images, targets in train_loader:
-            images = [img.to(device) for img in images]
-            targets = [{k: v.to(device) for k, v in t.items() if isinstance(v, torch.Tensor)} for t in targets]
-
-            optimizer.zero_grad()  # Reset gradients to 0
-            loss_dict = model(images, targets)
-            loss = sum(loss for loss in loss_dict.values())
-
-            loss.backward()  # Backpropagation
-            optimizer.step()  # Update model weights
-            train_loss += loss.item()
-
-        avg_train_loss = train_loss / len(train_loader)
+        avg_train_loss = _train_one_epoch(model, optimizer, train_loader, device)
         train_loss_history.append(avg_train_loss)
 
         # Evaluate model on validation set
-        model.eval()
-        map_metrics.reset()
-        valid_loss = 0.0
-
-        with torch.no_grad():
-            for images, targets in valid_loader:
-                images = [img.to(device) for img in images]
-                targets = [{k: v.to(device) for k, v in t.items() if isinstance(v, torch.Tensor)} for t in targets]
-
-                loss_dict = model(images, targets)
-                loss = sum(loss for loss in loss_dict.values())
-                output = model(images)
-                map_metrics.update(output, targets)
-
-                valid_loss += loss.item()
-
-        avg_valid_loss = valid_loss / len(valid_loader)
+        avg_valid_loss, map_score_50, map_score_50_95 = _validate_one_epoch(model, valid_loader, device, map_metrics)
         valid_loss_history.append(avg_valid_loss)
 
-        # Calculate mAP metrics
-        result = map_metrics.compute()
-        map_score_50 = result["map_50"].item()
-        map_score_50_95 = result["map"].item()
+        # Update learning rate
+        scheduler.step(avg_valid_loss)
+
         valid_map50_history.append(map_score_50)
         valid_map50_95_history.append(map_score_50_95)
         end_time = time.perf_counter()
 
+        metrics_data.append({
+            'epoch': epoch + 1,
+            'train_loss': avg_train_loss,
+            'valid_loss': avg_valid_loss,
+            'valid_map50': map_score_50,
+            'valid_map50_95': map_score_50_95,
+            'time': end_time - start_time
+        })
+
         print(f"Epoch {epoch + 1}/{epochs} | "
+              f"LR: {optimizer.param_groups[0]['lr']:.6f} | "
               f"Train loss: {avg_train_loss:.4f} | "
               f"Validation loss: {avg_valid_loss:.4f} | "
-              f"Validation mAP@0.5: {map_score_50:.4f}"
-              f"Epoch time: {end_time - start_time:.4f}")
+              f"Validation mAP@0.5: {map_score_50:.4f} | "
+              f"Validation mAP@0.5-0.95: {map_score_50_95:.4f} | "
+              f"Epoch time: {end_time - start_time:.2f}s")
+
+        # Save best model state
+        if map_score_50_95 > best_map:
+            best_map = map_score_50_95
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_map': best_map,
+                # có thể lưu thêm lịch sử loss, map để plot
+            }, model_save_path)
+            print(f"--> Saved new best model with mAP@0.5-0.95: {best_map:.4f} in epoch: {epoch + 1}")
 
     print("Training complete.")
-    return train_loss_history, valid_loss_history, valid_map50_history, valid_map50_95_history
+    df = pd.DataFrame(metrics_data)
+    df.to_csv(os.path.join("results", f"{result_file}.csv"), index=False)
+    print(f"Training metrics saved to {result_file}.csv")
 
 
-def evaluate_model(model, device, test_loader):
+def evaluate_model(model, device, test_loader, results_file, model_path="best_model.pth"):
+    print(f"\nLoading best model from {model_path} for evaluation...")
+    checkpoint = torch.load(model_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     map_metric = MeanAveragePrecision(iou_thresholds=[0.5, 0.95])
     map_metric.reset()
@@ -208,5 +274,17 @@ def evaluate_model(model, device, test_loader):
     result = map_metric.compute()
     test_map_50 = result["map_50"].item()
     test_map_50_95 = result["map"].item()
+
+    # Print result
     print(f"Test mAP@0.5: {test_map_50:.4f}")
     print(f"Test mAP@0.5-0.95: {test_map_50_95:.4f}")
+
+    # Save result file
+    evaluation_results = {
+        'test_map_50': test_map_50,
+        'test_map_50_95': test_map_50_95
+    }
+
+    df = pd.DataFrame([evaluation_results])
+    df.to_csv(os.path.join("results", f"{results_file}.csv"), index=False)
+    print(f"Evaluation results saved to {results_file}.csv")
