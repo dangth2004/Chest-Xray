@@ -33,11 +33,12 @@ def save_images_and_csv(path_to_dicom_folder, destination_dir, df_full_labels, i
     split_csv_path = os.path.join(destination_dir, 'annotation.csv')
     split_df.to_csv(split_csv_path, index=False)
 
-    # Split images into train - valid - test folder
+    # Split images into image folder
     for img_id in image_id_list:
         dicom_path = os.path.join(path_to_dicom_folder, f"{img_id}.dicom")
         img_path = os.path.join(img_folder, f"{img_id}.png")
-        cv2.imwrite(img_path, read_dicom_image(dicom_path))
+        img = read_dicom_image(dicom_path)
+        cv2.imwrite(img_path, img)
 
 
 def split_data(path_to_dicom_folder, path_to_csv,
@@ -116,3 +117,5 @@ def split_data(path_to_dicom_folder, path_to_csv,
     print("Processing test folder...")
     save_images_and_csv(path_to_dicom_folder=path_to_dicom_folder, destination_dir=test_folder,
                         df_full_labels=dataset, image_id_list=test_ids)
+
+    print("Finished reading and splitting data into train/valid/test sets.")
