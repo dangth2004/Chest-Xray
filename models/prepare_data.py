@@ -34,6 +34,25 @@ class CustomDataset(Dataset):
         return len(self.image_ids)
 
     def __getitem__(self, index):
+        """
+        Retrieves an image and its corresponding annotations for a given index.
+
+        This method is essential for PyTorch `Dataset` functionality. It loads an image,
+        extracts its bounding box annotations and class information, and applies
+        any specified transformations. It also handles cases where an image
+        might not be readable or might not have any bounding boxes.
+
+        :param index: The index of the item to retrieve.
+        :type index: int
+        :return: A tuple containing the image tensor and a dictionary of its annotations.
+                 The image tensor is a `torchvision.tv_tensors.Image` object.
+                 The annotation dictionary contains:
+                 - "boxes": A `torchvision.tv_tensors.BoundingBoxes` object in "XYXY" format.
+                 - "image_id": The ID of the image.
+                 - "class_name": A list of class names for each bounding box.
+                 - "labels": A `torch.Tensor` of class IDs (int64) for each bounding box.
+        :rtype: tuple[tv_tensors.Image, dict]
+        """
         image_id = self.image_ids[index]  # Lấy image_id hiện tại
         img_path = os.path.join(self.img_dir, f"{image_id}.png")  # Sử dụng image_id đúng
 
@@ -83,11 +102,11 @@ def data_transform():
     """
     Generates image transformation pipelines for training and evaluation of grayscale images.
 
-    The training pipeline includes data augmentation techniques such as random
-    horizontal/vertical flips and rotation, in addition to converting to image format,
-    converting to ``float32``, converting to grayscale.
-    The evaluation pipeline includes converting to image format, converting to ``float32``,
-    converting to grayscale, without data augmentation.
+    The training pipeline incorporates data augmentation techniques such as random
+    horizontal flips, Gaussian noise, and Gaussian blur, in addition to
+    converting to image format, casting to ``float32``, and converting to grayscale.
+    The evaluation pipeline includes converting to image format, casting to ``float32``,
+    and converting to grayscale, without any data augmentation.
 
     :return: A tuple containing two ``torchvision.transforms.v2.Compose`` objects:
              - ``train_transforms``: The transformation pipeline for training data.
@@ -99,6 +118,7 @@ def data_transform():
         v2.ToImage(),
         v2.ToDtype(torch.float32, scale=True),
         v2.Grayscale(),
+        v2.Resize(800, antialias=True),
         # DATA AUGMENTATION
         v2.RandomHorizontalFlip(p=0.5),
         v2.GaussianNoise(),
@@ -138,13 +158,11 @@ def collate_fn(batch):
 def load_data(train_folder, val_folder, test_folder,
               train_csv, val_csv, test_csv, batch_size):
     """
-    Loads image datasets and creates PyTorch DataLoader instances.
+    Loads image datasets for training, validation, and testing.
 
-    This function first generates the necessary image transformations using
-    ``data_transform``, then initializes ``CustomDataset`` objects for training,
-    validation, and testing data. Finally, it wraps these datasets in ``DataLoader``s
-    for efficient batch processing, utilizing a custom ``collate_fn`` for flexible
-    batch handling.
+    This function prepares data loaders for deep learning models by
+    creating custom datasets from specified image folders and CSV annotation files,
+    applying predefined transformations, and then wrapping them in PyTorch DataLoaders.
 
     :param train_folder: Path to the directory containing training images.
     :type train_folder: str
@@ -152,17 +170,16 @@ def load_data(train_folder, val_folder, test_folder,
     :type val_folder: str
     :param test_folder: Path to the directory containing test images.
     :type test_folder: str
-    :param train_csv: Path to the CSV file containing annotations for training data.
+    :param train_csv: Path to the CSV file with annotations for the training dataset.
     :type train_csv: str
-    :param val_csv: Path to the CSV file containing annotations for validation data.
+    :param val_csv: Path to the CSV file with annotations for the validation dataset.
     :type val_csv: str
-    :param test_csv: Path to the CSV file containing annotations for test data.
+    :param test_csv: Path to the CSV file with annotations for the test dataset.
     :type test_csv: str
-    :return: A tuple containing three PyTorch DataLoader objects:
-             - train_loader: DataLoader for the training dataset.
-             - valid_loader: DataLoader for the validation dataset.
-             - test_loader: DataLoader for the test dataset.
-    :rtype: tuple[DataLoader, DataLoader, DataLoader]
+    :param batch_size: The number of samples per batch to load.
+    :type batch_size: int
+    :return: A tuple containing the train_loader, valid_loader, and test_loader.
+    :rtype: tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader, torch.utils.data.DataLoader]
     """
     train_transforms, test_transforms = data_transform()
 
