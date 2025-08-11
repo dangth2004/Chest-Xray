@@ -212,6 +212,15 @@ def train_classification_model(epochs, model, device, loss_func, optimizer, trai
         scheduler.step(val_loss)
         end_time = time.perf_counter()
 
+        # Print information of this epoch
+        print(f"Epoch {epoch + 1}/{epochs} | "
+              f"LR: {optimizer.param_groups[0]['lr']:.6f} | "
+              f"Train loss: {train_loss:.4f} | "
+              f"Train acc: {train_acc:.4f} | "
+              f"Validation loss: {val_loss:.4f} | "
+              f"Validation acc: {val_acc:.4f} | "
+              f"Epoch time: {end_time - start_time:.2f}s")
+
         # Save the best model state with the highest accuracy on validation set
         if val_acc > best_val_acc:
             best_val_acc = val_acc
@@ -222,15 +231,6 @@ def train_classification_model(epochs, model, device, loss_func, optimizer, trai
                 'best_acc': best_val_acc
             }, model_save_path)
             print(f"--> Saved new best model with validation accuracy: {best_val_acc:.4f} in epoch: {epoch + 1}")
-
-        # Print information of this epoch
-        print(f"Epoch {epoch + 1}/{epochs} | "
-              f"LR: {optimizer.param_groups[0]['lr']:.6f} | "
-              f"Train loss: {train_loss:.4f} | "
-              f"Train acc: {train_acc:.4f} | "
-              f"Validation loss: {val_loss:.4f} | "
-              f"Validation acc: {val_acc:.4f} | "
-              f"Epoch time: {end_time - start_time:.2f}s")
 
         metrics_data.append({
             'epoch': epoch + 1,
@@ -284,4 +284,33 @@ def evaluate_classification_model(model, device, test_loader, model_state):
     plt.title('Receiver Operating Characteristic (ROC) Curve')
     plt.legend()
     plt.grid()
+    plt.show()
+
+
+def draw_training_classification_result(path_to_csv):
+    data = pd.read_csv(path_to_csv)
+    train_acc = data['train_acc'].tolist()
+    val_acc = data['val_acc'].tolist()
+    train_loss = data['train_loss'].tolist()
+    val_loss = data['val_loss'].tolist()
+    epochs = data['epoch'].tolist()
+
+    figs, axes = plt.subplots(1, 2, figsize=(12, 5))
+    axes[0].plot(range(1, len(train_acc) + 1), train_acc, label='Training accuracy', marker='o')
+    axes[0].plot(range(1, len(val_acc) + 1), val_acc, label='Validation accuracy', marker='o')
+    axes[0].set_xlabel('Epoch')
+    axes[0].set_ylabel('Accuracy (%)')
+    axes[0].set_xticks(epochs)
+    axes[0].legend()
+    axes[0].grid(True)
+    axes[0].set_title('Training and validation accuracy')
+    axes[1].plot(range(1, len(train_loss) + 1), train_loss, label='Training loss', marker='o')
+    axes[1].plot(range(1, len(val_loss) + 1), val_loss, label='Validation loss', marker='o')
+    axes[1].set_xlabel('Epoch')
+    axes[1].set_ylabel('Loss')
+    axes[1].set_xticks(epochs)
+    axes[1].legend()
+    axes[1].grid(True)
+    axes[1].set_title('Training and validation loss')
+    plt.tight_layout()
     plt.show()
